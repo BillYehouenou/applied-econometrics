@@ -16,6 +16,6 @@ Ce projet vise à étudier les violences sexuelles en France par département en
 ## Exécution des Projets
 Assurez-vous d'avoir créé et activé votre environnement virtuel.
    ```bash
-   virtualenv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
+   install.packages("renv")
+   renv::init()
+   pacman::p_load(car, lmtest, sandwich, stargazer, broom, dplyr, ggplot2, plm, tseries, urca, zoo)
