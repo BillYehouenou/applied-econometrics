@@ -1,0 +1,264 @@
+---
+title: Analyse de l'impact de la croissance économique sur les emissions de CO2 dans
+  le monde en 2017
+author: "Bill Yehouenou"
+date: "2022-11-21"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+getwd()
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+knitr::opts_chunk$set(warning = FALSE, echo = TRUE)
+#importation des libraries nécessaires
+library(kableExtra)
+library(stargazer)
+library(sandwich)
+library(lmtest)
+library(ggplot2)
+library(cowplot)
+library(corrplot)
+```
+
+# 1. Problématique et équation à estimer
+## 1.1. Problématique
+Historiquement, les émissions de CO2 ont toujours été fortement corrélées à la richesse d’un pays.
+Cependant, les récentes tendances du développement des énergies renouvelables permettent d’entretenir l’espoir d’une croissance verte. À l’échelle mondiale, des dizaines de pays ont maintenu une croissance économique tout en diminuant leur empreinte carbone depuis les années 1990. Ainsi, une question se pose __"la croissance fait-elle l'effet de serre ?"__. Telle est la problématique de notre projet où nous nous focalisons sur l'année __2017__.
+
+## 1.2. Equation du modèle
+Dans l'optique de construire notre modèle, nous avons fait recours à plusieurs revues scientifiques afin de comprendre les variables pouvant expliquer une quelconque augmentation des émissions des gaz à effets de serre. Une équation dite de _Kaya_ à particulièrement retenu notre attention. Développée par l'économiste japonais __Yoichi Kaya__ en 1993 dans son ouvrage _Environment, Energy, and Economy : strategies for sustainability_, l'équation de Kaya démontre qu'il y aurait un lien entre les émissions de gaz à effet de serre, la croissance économique, l'intensité énergétique et la population. Nous avons ajouté une variable indicatrice _Pays moins avancées_ pour étudier les différences entre ces différents groupes. Ainsi, l'équation de notre modèle devrait se présenter comme suit :
+$$ CO_2/habitant=b_0+b_1(PIB/habitant)+b_2(PIB/habitant)^2+b_3(EnergiesRenouvelables)+$$
+$$b_4(IntensiteEnergetique_economie)+b_5(PaysMoinsAvances)+e$$
+
+```{r importation et nettoyage de la base de donnees, echo=FALSE}
+ges <- read.csv("data_energy.csv" ,sep = "," ,header = TRUE, dec = ".")
+pma <- read.csv("pma.csv", sep=";" ,header = TRUE)
+#creation de la variable indicatrice des pays moins avancees
+Pma.countries <- c()
+for (i in 1:nrow(ges)){
+  if (ges$Country.Name[i] %in% pma$Country){is_pma <- 1} else {is_pma <- 0}
+  Pma.countries[i] <- is_pma
+}
+#verification des types de données
+ges_num <- lapply(ges[,5:11], as.numeric)
+Pma.countries <- as.factor(Pma.countries)
+ges <- cbind(ges[,1:4], ges_num, Pma.countries)
+ges <- ges[,-10] #suppression de la variable fossil.fuel.consumption, aucune donnée disponible
+#on prend les variables utiles au modèle
+ges_dt <- ges[,c(3,5:11)]
+colnames(ges_dt) <-  c("pays","pop_active","pop","pib_hbt","int_energy","energy_ren","co2_hbt","pma")
+ges_dt$co2_hbt <- ges_dt$co2_hbt/ges_dt$pop #transformation de la variable co2 en co2 par habitant
+```
+
+# 2. Collecte des données
+Notre échantillon est constitué de données prises en coupes instantanées en 2017 pour __217__ états dans le monde. Les données ont été prises sur le site https://data.worldbank.org de la Banque Mondiale. Nous avons combiné cette base avec la liste des pays moins avancées pour créer la variable _pma_ (variable indicatrice) qui prend les valeurs :
+
+* 0 si le pays n'est pas un pays moins avancée ;
+* 1 si le pays l'est
+
+En ce qui concerne le traitement des valeurs manquantes, notre base de données contenait une variable utile (d'après la revue de litterature) __pourcentage d'énergie fossile__ mais elle avait moins de 4% d'informations. On a jugé utile de ne pas la considérer. Pour finir, nous avons donné aux variables le type adéquat ("character", "numeric") pour pouvoir faciliter l'étude des phénomènes. Le dictionnaire des données ci-dessous résume toutes nos variables :
+
+```{r dictionnaire des variable,echo=FALSE}
+#creation du dictionnaire des variables
+code <- colnames(ges_dt)
+def <- c("Nom des pays",
+         "Population active en 2017",
+         "Population totale estimé en 2017",
+         "PIB par habitant en 2017 (prix constants)",
+         "Intensité énergétique de l'économie en tonnes/PIB",
+         "Pourcentage d'énergie renouvelable par pays",
+         "Emissions de CO2 par habitant en tonnes",
+         "Pays moins avancés"
+         )
+nature <- c("Qualitative","Quantitative","Quantitative","Quantitative",
+            "Quantitative","Quantitative","Quantitative","Indicatrice")
+sig <- c("","+","+","+","+","-","","+/- selon le cas")
+dict <- as.data.frame(matrix(c(code,def,nature,sig),8,4))
+colnames(dict) <- c("Code","Définition","Nature","Signe attendu")
+#affichage du tableau précédemment défini
+kable(dict,format="latex", booktabs = T, caption = "Dictionnaire des variables")%>%
+  kable_styling(latex_options = "striped")
+```
+
+```{r collecte des donnees, echo=FALSE}
+head(ges_dt[1:3,]) %>%
+  kable(format = "latex",booktabs=T,format.args = list(big.mark = " ", scientific = FALSE, digits = 4),
+        align = "c",caption = "Aperçu de la base de données") %>%
+  kable_styling(latex_options = "striped")
+```
+
+# 3. Analyse descriptive des variables
+## 3.1. Analyse univariée
+Nous avons décidé d'axer notre analyse univariée autour de trois variables intéressantes.
+
+```{r statistique univariee, fig.width=12,fig.height=5, echo=FALSE,message=FALSE}
+gf_statpib <- ggplot(ges_dt, aes(x=pib_hbt)) + 
+  geom_boxplot(fill="slateblue", alpha=.6) + 
+  xlab("PIB par habitant")+
+  ggtitle("Boxplot du PIB par habitant")
+
+gf_statco2 <- ggplot(ges_dt, aes(x=co2_hbt))+
+  geom_histogram(fill="darkseagreen",color="#e9ecef")+
+  xlab("CO2 par habitant")+
+  ggtitle("Histogramme de la variable CO2")
+#mettre tous les graphes dans une grille
+plot_grid(gf_statco2,gf_statpib + coord_flip(), ncol = 2)
+```
+
+L'analyse de l'histogramme des émissions de CO2 montre que les observations sont assez concentrées entre 0 et 0,015. Toutefois, on note quelques valeurs atypiques comme la Chine. La raison sera qu'en tant que gros producteur pour la plupart des pays, il pollue beaucoup plus et couvre les tonnes d'émissions de gaz à effet de serre des pays vers lesquelles il exporte. En ce qui concerne la population active, elle est assez regroupée autour d'une valeur, mais possède quelques outliers qu'il faudra surveiller.
+
+```{r analyse univariee des energies renouvelables,comment=NA}
+summary(ges_dt$energy_ren)
+```
+
+On remarque que la plupart des valeurs sont situées entre le 1er et le 3ème quartile donc les valeurs sont bien regroupées autour de la moyenne. Ainsi, la plupart des pays utilisent en moyenne 30% d'énergies renouvelables pour leur consommation énergétique annuelle.
+
+## 3.2. Analyse bivariée
+
+```{r statistique bivariee, fig.width=13, fig.height=11, echo=FALSE}
+#Graphe de la variable 'pop_active'
+graph_pop_active <- ggplot(ges_dt, aes(log(pop),log(co2_hbt),col=pma)) + 
+  geom_point()+
+  xlab("Population")+
+  ylab("CO2 par habitant")+
+  ggtitle("Graphe de la variable 'Population' et 'CO2 pa habitant'")
+# Graphe de la variable 'pib_hbt'
+graph_pib <- ggplot(ges_dt, aes(log(pib_hbt),log(co2_hbt),col=pma))+
+  geom_point()+
+  xlab("PIB par habitant")+
+  ylab("CO2 par habitant")+
+    ggtitle("Graphe de la variable 'PIB par habitant' et 'emissions de CO2'")
+# Graphe de la variable 'int_energy'
+graph_inteng <- ggplot(ges_dt, aes(log(int_energy),log(co2_hbt),col=pma))+
+  geom_point()+
+  xlab("Intensité énergétique")+
+  ylab("CO2 par habitant")+
+  ggtitle("Graphe de la variable 'Intensité energétique' et 'emissions de CO2'")
+# Graphe de la variable 'energy_ren'
+graph_energyren <- ggplot(ges_dt, aes(energy_ren,log(co2_hbt),col=pma))+
+  geom_point()+
+  xlab("% Energies renouvelables")+
+  ylab("CO2 par habitant")+
+  ggtitle("Graphe de la variable '% Energies renouvelables' et 'CO2 par habitant'")
+
+plot_grid(graph_pop_active,graph_pib,graph_inteng,graph_energyren, nrow = 2)
+```
+
+Afin de mieux comprendre les relations entre nos variables, nous avons mis certaines variables en logarithme pour nous affranchir des problemes d'échelles de mesure. L'analyse du nuage de points entre les _émissions de CO2 par habitant_ et le _PIB par habitant_ nous permet de constater l'existence d'une relation linéaire entre ces deux variables. De plus, on pourrait noter qu'il n'y a pas de réelles différences entre la manière dont les PMA et les non PMA sont dispersées. On peut donc conclure que plus le PIB par habitant est grand, plus on a d'émissions de CO2. La tendance s'inverse dans le cas des _energies renouvelables_.
+En ce qui concerne les 02 autres graphes, on a des variables beaucoup plus dispersées, cela ne permet pas de statuer sur l'existence d'une relation linéaire claire entre chaque variable explicative et les émissions de CO2 par habitant. Par ailleurs, il est nécessaire de mettre en relief quelques particularités :
+
+* au niveau de _l'intensité energétique de l'économie_, on constate que les PMA sont plus regroupées (variance intra-groupe faible) tandis que les non PMA sont plus dispersées (variance intra-groupe forte) en fonction des émissions de CO2. Les pays moins avancés ont une intensité energétique très __faible__ ;
+* même constat pour _la population_ et les émissions de CO2. Plus un pays à une population élevé alors, chaque habitant à un impact environnemental plus important en matière d'émission de CO2. 
+
+## 3.3. Matrice de corrélation
+
+```{r matrice de correlation, echo=TRUE}
+corr_mat <- cor(na.omit(ges_dt[,2:7]))
+kable(corr_mat,format="latex", booktabs = T, caption = "Matrice de correlation")%>%
+  kable_styling(latex_options = "striped")
+```
+
+On constate sur la matrice de corrélation ci-dessus, une corrélation positive entre les émissions de CO2 et le PIB par habitant et inversement pour le cas du taux d'énergies renouvelables. Par ailleurs, ce taux est corrélé négativement avec le PIB, mais positivement avec l'intensité énergétique. Il faut aussi noter une faible corrélation entre l'intensité énergétique et les émissions de CO2.
+
+# 4. Modèle
+## 4.1. Spécification du modèle
+Après avoir mis en route et comparé différents modèles, nous avons retenu un modèle en logarithme (3) avec des effets croisés sur le PIB et la variable PMA.
+
+```{r specification du modele, comment=NA,echo=FALSE}
+model1 <- lm(co2_hbt~pop_active+pib_hbt+int_energy+energy_ren,data=ges_dt)
+model2 <- lm(co2_hbt~pop_active+log(pib_hbt)+log(int_energy)+energy_ren,data=ges_dt)
+model3 <- lm(co2_hbt~pop_active+log(pib_hbt):pma+log(int_energy)+energy_ren,data=ges_dt)
+stargazer(model1,model2,model3,type="text")
+```
+
+En effet, il s'agit du modèle avec le meilleur R2 ajusté. Il faudra faire un test de Ramsey pour vérifier la spécification du modèle. 
+
+## 4.2. Test de Ramsey
+
+```{r reset test, warning=FALSE, comment=NA}
+resettest(model3)
+```
+
+La p-value du test de Ramsey est inférieure au seuil de 5% alors, le modèle est bien spécifié.
+
+## 4.3. Interprétation des coefficients et qualité du modèle
+- __Qualité d’ajustement du modèle__
+
+Environ 69,39% de la variance des émissions en CO2 est expliquée par la population active, l'intensité énergétique et les effets croisées entre le PIB par habitant et le fait que le pays soit moins avancé ou non.
+
+- __Test de Fisher global (test de significativité globale du modèle)__
+
+Le modèle est __globalement satisfaisant__ car la p-value de la statistique de Fisher est inférieure à 5%
+
+- __Significativité des coefficients__
+
+Le coefficient de la variable _pop_active_ n'est pas significatif au seuil de 5% car sa _p-value_ est inférieure à 5%. En revanche, les variables sont significatives _energy_ren_ et _log(int_energy)_ au seuil de 5%. De plus ,les effets croisés des variables _log(pib_hbt)_ et _pma_ sont significatives au seuil de 5% et de 1%.
+
+Lorsque l'intensité énergétique augmente d’un pourcent, les émissions de CO2 augmentent de 0,00005 tonne, soit 0,05 kg par habitant, toute chose égale par ailleurs. De plus, si le pourcentage d'énergie renouvelable utilisée augmente d'une unité de pourcentage alors les émissions de C02 augmente de 0,0001 tonne, soit 0,1 kg par habitant. En ce qui concerne les effets croisés :
+
+* si le pays est un pma, lorsque le PIB par habitant augmente d'1% alors les émissions de C02 augmente 0,003 tonne soit 3kg par habitant
+* sinon, lorsque le PIB par habitant augmente d'1% alors les émissions de C02 augmente 0,002 tonne soit 2kg par habitant
+
+## 4.4. Analyse des résidus du modèle
+
+```{r model final, comment=NA}
+model <- lm(co2_hbt~log(pib_hbt):pma+log(int_energy)+energy_ren,data=ges_dt)
+```
+
+Avant d'analyser le résidu nous avons retirer la variable _pop_active_ qui n'était pas significative dans notre modèle.
+
+__Résidus studentisés__
+
+Les résidus studentisés obtenus par validation croisée nous montrent que les pays cités ci-dessous sont des variables atypiques dans notre modèle.
+
+```{r residus studentisees, echo=FALSE, fig.width=12, fig.height=6, message=FALSE, warning=FALSE, comment=NA}
+rstud = rstudent(model)
+ges_dt$pays[which(abs(rstud) >= 2)]
+ggplot(as.data.frame(rstud),aes(1:length(rstud),rstud))+
+  geom_point(cex=.5,pch=10)+
+  xlab("")+ylab("Résudus studentisées")+
+  geom_hline(yintercept=qt(0.025,1004), linetype="dashed", color = "coral1")+
+  geom_hline(yintercept=qt(0.975,1004), linetype="dashed", color = "coral1")+
+  geom_smooth(method = "loess",color="purple")+
+  ggtitle("Analyse graphique des résidus studentisées")
+```
+
+On a procédé aussi à un lissage de nos résidus et ce lissage est assez proche de 0. Donc, on soupçonne que nos résidus ont une espérance nulle et de variance constante.
+
+__Test de normalité des résidus de Shapiro-Wilk__
+
+```{r normalite des residus,comment=NA}
+shapiro.test(model$residuals)
+```
+
+La p-value du test de normalité des résidus est inférieure au seuil de 5% alors on rejette l'hypothèse de normalité des résidus. Les résidus ne suivent pas une loi normale. Cela est dû à l'existence de valeurs atypiques qui étendent la distribution.
+
+```{r graphique de normalite, echo=FALSE, fig.height=5, fig.width=12, message=FALSE, warning=FALSE}
+# densité des résidus du modèle
+gf_dens <- ggplot(as.data.frame(model$residuals), aes(x=model$residuals)) + 
+  geom_density(fill="darksalmon", color="#e9ecef", alpha=0.8)+xlab("Residus")+
+  ggtitle("Densité des résidus du modèle")
+# histogramme des résidus
+gf_hist <- ggplot(as.data.frame(model$residuals), aes(x=model$residuals)) + 
+  geom_histogram(fill="darkkhaki", color="#e9ecef", alpha=0.8)+xlab("Residus")+
+  ggtitle("Histogramme des résidus")
+
+plot_grid(gf_dens,gf_hist,ncol = 2)
+```
+
+__Test d'hétéroscédasticité__
+
+```{r test heteroscedasticite,comment=NA}
+bptest(model)
+```
+
+La p-value est inférieure au seuil de 5% alors on rejette l'hypothèse nulle d'homoscédasticité. Donc, on est en présence d'un problème d'hétéroscédasticité des résidus. Il faut donc appliquer la correction de White.
+
+__Correction de White__
+
+```{r test white,comment=NA}
+coeftest(model,vcovHC(model))
+```
+
+Après la mise en oeuvre de la méthode, on remarque que le niveau de significativité des coefficients a diminué car le modèle a été corrigée de l'hétéroscédasticité. Toutefois, les variables significatives demeurent toujours significatives au seuil de 5%.
