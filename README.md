@@ -5,12 +5,10 @@ Ce dossier contient mes projets en économétrie : "Emissions-GES" et "Sexual Vi
 
 ## Emissions-GES Project
 
-### Objectif
 L'objectif principal de ce projet est d'analyser les émissions de gaz à effet de serre (GES) et d'identifier les facteurs qui influent sur ces émissions.
 
 ## Sexual Violence Project
 
-### Objectif
 Ce projet vise à étudier les violences sexuelles en France par département en utilisant des méthodes économétriques.
 
 ## Exécution des Projets
